@@ -26,11 +26,24 @@ pub(super) struct Layout<'a> {
     cache: &'a SegmentCache,
     tail: &'a [(TailPart, u16)],
     width: u16,
+    /// Rows the document may show this frame. Capping the one number every
+    /// consumer reads paces segments and the tail alike.
+    revealed: u16,
 }
 
 impl<'a> Layout<'a> {
-    pub fn new(cache: &'a SegmentCache, tail: &'a [(TailPart, u16)], width: u16) -> Self {
-        Self { cache, tail, width }
+    pub fn new(
+        cache: &'a SegmentCache,
+        tail: &'a [(TailPart, u16)],
+        width: u16,
+        revealed: u16,
+    ) -> Self {
+        Self {
+            cache,
+            tail,
+            width,
+            revealed,
+        }
     }
 
     fn len(&self) -> usize {
@@ -38,10 +51,22 @@ impl<'a> Layout<'a> {
     }
 
     fn height(&self, i: usize) -> u16 {
-        match self.cache.get(i) {
+        let full = match self.cache.get(i) {
             Some(seg) => seg.height(self.width),
             None => self.tail.get(i - self.cache.len()).map_or(0, |&(_, h)| h),
-        }
+        };
+        full.min(self.revealed)
+    }
+
+    /// Rows the document holds ignoring the reveal budget, so the budget is
+    /// advanced against the content rather than against itself.
+    pub fn unpaced_total_rows(&self) -> u16 {
+        self.cache
+            .segments()
+            .iter()
+            .map(|seg| seg.height(self.width))
+            .chain(self.tail.iter().map(|&(_, h)| h))
+            .fold(0u16, u16::saturating_add)
     }
 
     /// One past the last addressable row, so `retreat` from here is "the last
@@ -154,6 +179,12 @@ mod tests {
         ScrollPos { seg, row }
     }
 
+    /// A layout that hides nothing, since these walk the document rather than
+    /// the reveal.
+    fn layout<'a>(cache: &'a SegmentCache, tail: &'a [(TailPart, u16)]) -> Layout<'a> {
+        Layout::new(cache, tail, WIDTH, u16::MAX)
+    }
+
     #[test_case(pos(0, 0), 0, pos(0, 0)  ; "zero_rows_stays")]
     #[test_case(pos(0, 0), 2, pos(0, 2)  ; "inside_first_segment")]
     #[test_case(pos(0, 0), 3, pos(1, 0)  ; "boundary_lands_on_next_start")]
@@ -161,10 +192,7 @@ mod tests {
     #[test_case(pos(1, 0), 99, pos(3, 0) ; "clamps_at_the_end")]
     fn advance_walks_rows(from: ScrollPos, rows: u32, expected: ScrollPos) {
         let cache = cache(&[3, 1, 2]);
-        assert_eq!(
-            Layout::new(&cache, &[], WIDTH).advance(from, rows),
-            expected
-        );
+        assert_eq!(layout(&cache, &[]).advance(from, rows), expected);
     }
 
     #[test_case(pos(2, 1), 1, pos(2, 0) ; "inside_a_segment")]
@@ -173,16 +201,13 @@ mod tests {
     #[test_case(pos(1, 0), 99, pos(0, 0) ; "clamps_at_the_start")]
     fn retreat_walks_rows(from: ScrollPos, rows: u32, expected: ScrollPos) {
         let cache = cache(&[3, 1, 2]);
-        assert_eq!(
-            Layout::new(&cache, &[], WIDTH).retreat(from, rows),
-            expected
-        );
+        assert_eq!(layout(&cache, &[]).retreat(from, rows), expected);
     }
 
     #[test]
     fn the_tail_extends_the_document_past_the_cache() {
         let cache = cache(&[3]);
-        let layout = Layout::new(&cache, &[(TailPart::Spacer, 1), (TailPart::Text, 4)], WIDTH);
+        let layout = layout(&cache, &[(TailPart::Spacer, 1), (TailPart::Text, 4)]);
         assert_eq!(layout.total_rows(), 8);
         assert_eq!(layout.at_row(4), pos(2, 0));
         assert_eq!(layout.doc_row(pos(2, 3)), 7);
@@ -193,9 +218,6 @@ mod tests {
     #[test_case(pos(1, 1), pos(0, 2), 0 ; "target_above_never_underflows")]
     fn rows_from_counts_down(from: ScrollPos, to: ScrollPos, expected: u32) {
         let cache = cache(&[3, 2]);
-        assert_eq!(
-            Layout::new(&cache, &[], WIDTH).rows_from(from, to),
-            expected
-        );
+        assert_eq!(layout(&cache, &[]).rows_from(from, to), expected);
     }
 }

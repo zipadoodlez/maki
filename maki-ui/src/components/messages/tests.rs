@@ -12,12 +12,14 @@ use maki_providers::ImageMediaType;
 use ratatui::backend::TestBackend;
 use std::collections::HashSet;
 use std::ops::Range;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use test_case::test_case;
 
 const UNDECODABLE_IMAGE: &str = "invalid image";
 const VIEW_WIDTH: u16 = 80;
 const VIEW_HEIGHT: u16 = 24;
+/// One `Cadence::SMOOTH` frame, the step a reveal is measured against.
+const FRAME: Duration = Duration::from_millis(16);
 
 #[test_case(false ; "live")]
 #[test_case(true ; "loaded")]
@@ -1202,6 +1204,134 @@ fn toggle_expand_collapse_truncated_tool() {
     assert!(seg_text(&panel, "t1").contains("click to expand"));
 }
 
+/// A tool header draws, then its output arrives. The header settling first is
+/// what makes this easy to get wrong: the budget already sits on the content
+/// when the rows that need pacing turn up, and a budget compared against the
+/// content ceiling reads as settled one frame into a reveal.
+#[test]
+fn tool_output_after_a_settled_header_grows_one_row_at_a_time() {
+    let mut panel = MessagesPanel::new(UiConfig::default(), EventHandle::disconnected_for_test());
+    panel.tool_start(ToolStartEvent {
+        id: "t1".into(),
+        tool: BASH_TOOL_NAME.into(),
+        summary: "cmd".into(),
+        annotation: None,
+        input: None,
+        raw_input: None,
+        output: None,
+        render_header: None,
+    });
+    render(&mut panel, 80, 24);
+    let header = panel.layout().total_rows();
+    let mut clock = Instant::now();
+    let _ = panel.advance_reveal(clock);
+    let _ = panel.advance_reveal(clock);
+    assert_eq!(
+        panel.layout().total_rows(),
+        header,
+        "the header alone is settled before the body arrives"
+    );
+
+    let body = (0..40)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    panel.tool_output("t1", &body);
+    let full = u32::from(panel.layout().unpaced_total_rows());
+    assert!(full > header + 4, "the body must be tall enough to pace");
+
+    let mut previous = panel.layout().total_rows();
+    assert!(previous < full, "the body landed whole, at {full} rows");
+    for frame in 0..8 {
+        clock += FRAME;
+        let _ = panel.advance_reveal(clock);
+        let now = panel.layout().total_rows();
+        assert!(
+            now <= previous + 1,
+            "frame {frame} drew {} rows, from {previous} to {now}",
+            now - previous
+        );
+        previous = now;
+    }
+}
+
+/// A tool can think for seconds before its output lands. That pause must not
+/// bank reveal budget: crediting the whole gap would dump the output in one
+/// frame, which is the jump this pacing exists to remove.
+#[test]
+fn a_pause_before_output_reveals_one_row_not_a_burst() {
+    let mut panel = MessagesPanel::new(UiConfig::default(), EventHandle::disconnected_for_test());
+    panel.tool_start(ToolStartEvent {
+        id: "t1".into(),
+        tool: BASH_TOOL_NAME.into(),
+        summary: "cmd".into(),
+        annotation: None,
+        input: None,
+        raw_input: None,
+        output: None,
+        render_header: None,
+    });
+    render(&mut panel, 80, 24);
+    let mut clock = Instant::now();
+    let _ = panel.advance_reveal(clock);
+
+    let body = (0..40)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    panel.tool_output("t1", &body);
+    let before = panel.layout().total_rows();
+
+    clock += Duration::from_secs(2);
+    let _ = panel.advance_reveal(clock);
+
+    let after = panel.layout().total_rows();
+    assert!(
+        after <= before + 1,
+        "a two second pause drew {} rows, from {before} to {after}",
+        after - before
+    );
+}
+
+/// `take_all` hands over the whole buffer, including text the typewriter had
+/// not revealed. Flushing must not turn that into a height jump: the rows a
+/// turn ends with have to keep growing at the reveal's rate, whether they are
+/// drawn from the tail or from the segment that replaces it.
+#[test]
+fn flush_does_not_jump_the_height_the_tail_was_drawing() {
+    let mut panel = MessagesPanel::new(UiConfig::default(), EventHandle::disconnected_for_test());
+    panel.streaming_text.push(&"a\n".repeat(80));
+    render(&mut panel, 80, 24);
+    let mut clock = Instant::now();
+    for _ in 0..4 {
+        clock += FRAME;
+        let _ = panel.advance_reveal(clock);
+        render(&mut panel, 80, 24);
+    }
+    let before = panel.layout().total_rows();
+
+    panel.flush();
+    render(&mut panel, 80, 24);
+
+    assert_eq!(
+        panel.layout().total_rows(),
+        before,
+        "the flush moved the document by itself"
+    );
+    assert!(
+        panel.layout().unpaced_total_rows() > before as u16,
+        "the rows still to come stay ahead of the budget"
+    );
+}
+
+#[test]
+fn settled_content_reveals_nothing_and_owes_no_frame() {
+    let mut panel = panel_with_long_tool(200);
+    let settled = panel.layout().total_rows();
+
+    assert_eq!(panel.tick(), Dirty::NO, "a settled panel owes no frame");
+    assert_eq!(panel.layout().total_rows(), settled);
+}
 #[test]
 fn extract_selection_copies_visible_content_only() {
     let panel = panel_with_long_tool(200);

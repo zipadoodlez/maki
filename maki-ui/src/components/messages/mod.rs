@@ -35,7 +35,7 @@ use ratatui_image::picker::Picker;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::scrollbar::{self, render_vertical_scrollbar};
 use super::streaming_content::StreamingContent;
@@ -57,6 +57,14 @@ use tracing::warn;
 const REFLOW_MARGIN_VIEWPORTS: u32 = 1;
 /// How far outside the drawn range an image keeps its encoded protocol.
 const IMAGE_KEEP_MARGIN_SEGMENTS: usize = 8;
+/// Rows revealed per second while the document is still growing, shared by
+/// every part so total height grows at one rate. A rate rather than a per-frame
+/// step, because a frame is not a fixed amount of time.
+const ROWS_PER_SEC: f64 = 15.0;
+/// Longest gap credited to the reveal clock, one `Cadence::SMOOTH` frame. A
+/// longer step credits several frames at once and shows two rows together; no
+/// clamp at all lets an idle tool bank a budget and dump it in one frame.
+const MAX_REVEAL_STEP: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy)]
 pub struct PromptProgress {
@@ -78,6 +86,16 @@ pub struct MessagesPanel {
     /// The streaming tail the last `view` drew, in the order it drew it. Lets
     /// the row walk and clicks address the tail between frames.
     tail: Vec<(TailPart, u16)>,
+    /// Rows the document may show, advanced every `tick` and clamped to the
+    /// rows there are. A ceiling on the document rather than a per-part clock,
+    /// so simultaneous arrivals share one rate.
+    revealed_rows: f64,
+    /// When the reveal clock last ran, so the rate is per second rather than
+    /// per call.
+    last_reveal: Instant,
+    /// Rows the content occupies, so `cadence` can tell a mid-reveal document
+    /// from a settled one.
+    content_rows: u16,
     hl_worker: RenderWorker,
     image_picker: Option<Picker>,
     inline_images: bool,
@@ -137,6 +155,10 @@ impl MessagesPanel {
             viewport_width: crossterm::terminal::size().map_or(80, |(w, _)| w.saturating_sub(1)),
             cache: SegmentCache::new(),
             tail: Vec::new(),
+            // Unbounded until content arrives, so a panel starts settled.
+            revealed_rows: f64::INFINITY,
+            last_reveal: Instant::now(),
+            content_rows: 0,
             hl_worker: RenderWorker::new(),
             image_picker: terminal_image::picker(ui_config.inline_images),
             inline_images: ui_config.inline_images,
@@ -606,7 +628,12 @@ impl MessagesPanel {
     }
 
     fn layout(&self) -> Layout<'_> {
-        Layout::new(&self.cache, &self.tail, self.viewport_width)
+        Layout::new(
+            &self.cache,
+            &self.tail,
+            self.viewport_width,
+            self.revealed_rows as u16,
+        )
     }
 
     /// Positive scrolls up. Clamping is immediate rather than deferred to the
@@ -788,11 +815,38 @@ impl MessagesPanel {
     /// running tool had to claim it was animating: it was the only way to keep
     /// them fed.
     pub fn tick(&mut self) -> Dirty {
-        let mut dirty = self.drain_highlights() | self.poll_live_bufs() | self.refresh_images();
+        let grew = self.advance_reveal(Instant::now());
+        let mut dirty =
+            self.drain_highlights() | self.poll_live_bufs() | self.refresh_images() | grew;
         if self.show_idle_splash() {
             dirty |= self.idle_splash.poll_update(update::latest_version());
         }
         dirty
+    }
+
+    /// Advances the row budget by the time since the last call and reports
+    /// whether a row crossed, which is the only thing that keeps the panel
+    /// asking to be redrawn. `now` is a parameter so a test can drive the
+    /// clock instead of sleeping for one.
+    fn advance_reveal(&mut self, now: Instant) -> Dirty {
+        let dt = now
+            .saturating_duration_since(self.last_reveal)
+            .min(MAX_REVEAL_STEP)
+            .as_secs_f64();
+        self.last_reveal = now;
+
+        let content = f64::from(self.layout().unpaced_total_rows());
+        if self.revealed_rows.is_infinite() {
+            // Take what is already on screen as read rather than revealing it.
+            self.content_rows = content as u16;
+            self.revealed_rows = content;
+            return Dirty::NO;
+        }
+        let rendered = (self.revealed_rows + dt * ROWS_PER_SEC).min(content);
+        let moved = rendered as u16 > self.revealed_rows as u16;
+        self.content_rows = content as u16;
+        self.revealed_rows = rendered;
+        Dirty::from(moved)
     }
 
     pub fn cadence(&self) -> Cadence {
@@ -802,7 +856,10 @@ impl MessagesPanel {
         // for the whole reasoning phase.
         let smooth = self.streaming_text.is_animating()
             || self.accent.is_animating()
-            || (self.streaming_thinking.is_animating() && !self.streaming_thinking_collapsed());
+            || (self.streaming_thinking.is_animating() && !self.streaming_thinking_collapsed())
+            // Only a frame spends the budget, so a mid-reveal document has to
+            // claim motion or it stops moving.
+            || (self.revealed_rows.is_finite() && (self.revealed_rows as u16) < self.content_rows);
         Cadence::any([
             // A running tool draws a spinner. Its output arriving is data, and
             // `tick` reports that separately.
