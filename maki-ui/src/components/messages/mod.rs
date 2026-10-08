@@ -60,7 +60,7 @@ const IMAGE_KEEP_MARGIN_SEGMENTS: usize = 8;
 /// Rows revealed per second while the document is still growing, shared by
 /// every part so total height grows at one rate. A rate rather than a per-frame
 /// step, because a frame is not a fixed amount of time.
-const ROWS_PER_SEC: f64 = 15.0;
+const ROWS_PER_SEC: f64 = 5.0;
 /// Longest gap credited to the reveal clock, one `Cadence::SMOOTH` frame. A
 /// longer step credits several frames at once and shows two rows together; no
 /// clamp at all lets an idle tool bank a budget and dump it in one frame.
