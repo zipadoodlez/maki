@@ -26,10 +26,12 @@ pub fn animation_elapsed_ms() -> u128 {
 }
 
 const DEFAULT_MS_PER_CHAR: u64 = 4;
-/// Draining the whole backlog takes this long, so the typewriter never falls
-/// further behind than roughly this. A big chunk speeds the reveal up instead
-/// of queueing a jump for later.
-const BACKLOG_WINDOW_MS: u64 = 200;
+/// Time constant of the catch-up term, in ms. The reveal rate grows in
+/// proportion to the backlog, `1 / LAG_MS` extra chars per ms per buffered
+/// char, so a big chunk speeds the reveal up smoothly instead of queueing a
+/// jump for later. The backlog decays with this time constant once the input
+/// stops, so the reveal eases back to the base rate rather than snapping.
+const LAG_MS: u64 = 200;
 
 pub struct Typewriter {
     buffer: String,
@@ -89,8 +91,8 @@ impl Typewriter {
             return;
         }
         let base = 1.0 / self.ms_per_char as f64;
-        let catch_up = backlog as f64 / BACKLOG_WINDOW_MS as f64;
-        self.carry += base.max(catch_up) * elapsed_ms;
+        let catch_up = backlog as f64 / LAG_MS as f64;
+        self.carry += (base + catch_up) * elapsed_ms;
         let step = self.carry.floor();
         self.carry -= step;
         if step > 0.0 {
@@ -240,33 +242,41 @@ mod tests {
     }
 
     #[test]
-    fn backlog_drains_within_the_window() {
+    fn backlog_drains_over_the_lag_window() {
         let mut tw = Typewriter::with_speed(10_000);
-        tw.push(&"a".repeat(BACKLOG_WINDOW_MS as usize + 1));
-        tw.set_elapsed(Duration::from_millis(BACKLOG_WINDOW_MS + 1));
+        tw.push(&"a".repeat(LAG_MS as usize + 1));
+        tw.set_elapsed(Duration::from_millis(LAG_MS + 1));
         tw.tick();
-        assert_eq!(tw.visible().chars().count(), tw.anim_target);
+        assert_eq!(
+            tw.visible().chars().count(),
+            tw.anim_target,
+            "a backlog this size drains within the lag window"
+        );
     }
 
     #[test]
-    fn base_rate_dominates_a_small_backlog() {
+    fn a_small_backlog_reveals_just_above_the_base_rate() {
         let mut tw = Typewriter::with_speed(DEFAULT_MS_PER_CHAR);
         tw.push("abc");
         tw.set_elapsed(Duration::from_millis(DEFAULT_MS_PER_CHAR));
         tw.tick();
-        assert_eq!(tw.visible().chars().count(), 1, "one char per ms_per_char");
+        // base 1/ms_per_char plus 3/LAG_MS, over ms_per_char ms, still floors to
+        // one char: the catch-up term adds to the base, it does not replace it.
+        assert_eq!(tw.visible().chars().count(), 1, "one char at a tiny backlog");
     }
 
     #[test]
-    fn catch_up_dominates_a_large_backlog() {
+    fn catch_up_adds_to_the_base_rate() {
         let mut tw = Typewriter::with_speed(DEFAULT_MS_PER_CHAR);
-        tw.push(&"a".repeat(BACKLOG_WINDOW_MS as usize));
+        tw.push(&"a".repeat(LAG_MS as usize));
         tw.set_elapsed(Duration::from_millis(DEFAULT_MS_PER_CHAR));
         tw.tick();
+        // base = 1/4 char/ms and catch-up = 200/200 = 1 char/ms sum to 1.25
+        // char/ms; over 4 ms that is 5 chars, one more than the base alone.
         assert_eq!(
             tw.visible().chars().count(),
-            DEFAULT_MS_PER_CHAR as usize,
-            "a full backlog drains a char per window step, beating the base rate"
+            DEFAULT_MS_PER_CHAR as usize + 1,
+            "the catch-up rate adds to the base rate"
         );
     }
 
