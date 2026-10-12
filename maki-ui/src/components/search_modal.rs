@@ -3,7 +3,7 @@ use std::cmp::Reverse;
 use crate::components::Overlay;
 use crate::components::keybindings::key;
 use crate::components::messages::ScrollPos;
-use crate::components::modal::Modal;
+use crate::components::modal::{Dimension, Modal};
 use crate::components::scrollbar::render_vertical_scrollbar;
 use crate::text_buffer::TextBuffer;
 use crate::theme;
@@ -207,8 +207,8 @@ impl SearchModal {
 
         let modal = Modal {
             title: MODAL_TITLE,
-            width_percent: MODAL_WIDTH_PERCENT,
-            max_height_percent: MODAL_MAX_HEIGHT_PERCENT,
+            width: Dimension::Percent(MODAL_WIDTH_PERCENT),
+            height: Dimension::Percent(MODAL_MAX_HEIGHT_PERCENT),
         };
         let (popup, inner) = modal.render(frame, area, content_rows + SEARCH_ROW);
         let viewport_h = inner.height.saturating_sub(SEARCH_ROW) as usize;

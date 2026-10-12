@@ -15,7 +15,7 @@ use maki_storage::model::persist_model;
 
 use crate::components::Overlay;
 use crate::components::list_picker::{ListPicker, PickerAction, PickerItem};
-use crate::components::modal::Modal;
+use crate::components::modal::{Dimension, Modal};
 use crate::text_buffer::TextBuffer;
 use crate::theme;
 
@@ -667,8 +667,8 @@ impl LoginPicker {
             Step::CustomName { input } => {
                 let modal = Modal {
                     title: " Provider name ",
-                    width_percent: 65,
-                    max_height_percent: 40,
+                    width: Dimension::Percent(65),
+                    height: Dimension::Percent(40),
                 };
                 let (popup, inner) = modal.render(frame, area, 2);
                 let t = theme::current();
@@ -686,8 +686,8 @@ impl LoginPicker {
             Step::CustomUrl { input, .. } => {
                 let modal = Modal {
                     title: " Base URL ",
-                    width_percent: 65,
-                    max_height_percent: 40,
+                    width: Dimension::Percent(65),
+                    height: Dimension::Percent(40),
                 };
                 let (popup, inner) = modal.render(frame, area, 2);
                 let t = theme::current();
@@ -708,8 +708,8 @@ impl LoginPicker {
             } => {
                 let modal = Modal {
                     title: &format!(" {display_name} "),
-                    width_percent: 65,
-                    max_height_percent: 40,
+                    width: Dimension::Percent(65),
+                    height: Dimension::Percent(40),
                 };
                 let (popup, inner) = modal.render(frame, area, 2);
                 let t = theme::current();
@@ -731,8 +731,8 @@ impl LoginPicker {
             } => {
                 let modal = Modal {
                     title: &format!(" {display_name} "),
-                    width_percent: 65,
-                    max_height_percent: 40,
+                    width: Dimension::Percent(65),
+                    height: Dimension::Percent(40),
                 };
                 let (popup, inner) = modal.render(frame, area, 2);
                 let t = theme::current();
@@ -754,8 +754,8 @@ impl LoginPicker {
             Step::Done { message } => {
                 let modal = Modal {
                     title: " Login ",
-                    width_percent: 50,
-                    max_height_percent: 30,
+                    width: Dimension::Percent(50),
+                    height: Dimension::Percent(30),
                 };
                 let (popup, inner) = modal.render(frame, area, 1);
                 frame.render_widget(

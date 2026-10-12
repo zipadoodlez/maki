@@ -1,6 +1,6 @@
 use crate::components::ModalScroll;
 use crate::components::Overlay;
-use crate::components::modal::Modal;
+use crate::components::modal::{Dimension, Modal};
 use crate::components::scrollbar::render_vertical_scrollbar;
 use crate::components::streaming_content::StreamingContent;
 use crate::components::thinking;
@@ -158,8 +158,8 @@ impl BtwModal {
             .line_count(padded_width) as u16;
         let modal = Modal {
             title: TITLE,
-            width_percent: WIDTH_PERCENT,
-            max_height_percent: MAX_HEIGHT_PERCENT,
+            width: Dimension::Percent(WIDTH_PERCENT),
+            height: Dimension::Percent(MAX_HEIGHT_PERCENT),
         };
         let (popup, inner) = modal.render(frame, area, total);
         let padded = Rect {

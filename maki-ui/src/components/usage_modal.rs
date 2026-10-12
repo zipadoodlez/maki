@@ -17,7 +17,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::components::ModalScroll;
 use crate::components::keybindings::key;
-use crate::components::modal::Modal;
+use crate::components::modal::{Dimension, Modal};
 use crate::components::scrollbar::render_vertical_scrollbar;
 use crate::repaint::{Dirty, Watch};
 use crate::theme;
@@ -118,8 +118,8 @@ impl UsageModal {
         let total = lines.len() as u16;
         let modal = Modal {
             title: TITLE,
-            width_percent: 60,
-            max_height_percent: 70,
+            width: Dimension::Percent(60),
+            height: Dimension::Percent(70),
         };
         let (popup, inner) = modal.render(frame, area, total);
         let viewport_h = inner.height;

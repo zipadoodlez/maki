@@ -7,7 +7,7 @@ use crate::animation::{animation_elapsed_ms, spinner_str};
 use crate::components::Overlay;
 use crate::components::is_ctrl;
 use crate::components::keybindings::key;
-use crate::components::modal::Modal;
+use crate::components::modal::{Dimension, Modal};
 use crate::components::scrollbar::render_vertical_scrollbar;
 use crate::repaint::Cadence;
 use crate::text_buffer::TextBuffer;
@@ -532,8 +532,8 @@ fn render_ready<T: PickerItem>(
     let notice_rows = notice.is_some() as u16;
     let modal = Modal {
         title,
-        width_percent: width_percent(area.width),
-        max_height_percent: MAX_HEIGHT_PERCENT,
+        width: Dimension::Percent(width_percent(area.width)),
+        height: Dimension::Percent(MAX_HEIGHT_PERCENT),
     };
     let (popup, inner) = modal.render(
         frame,
