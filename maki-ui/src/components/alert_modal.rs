@@ -1,5 +1,5 @@
 use crate::components::keybindings::key;
-use crate::components::modal::{BORDER, Dimension, Modal};
+use crate::components::modal::{BORDER, Dimension, Modal, inset};
 use crate::components::{Overlay, hint_line};
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -59,11 +59,7 @@ impl AlertModal {
         };
         let padded_width = modal.width(area, 0).saturating_sub(BORDER + H_PAD * 2);
         let (popup, inner) = modal.render(frame, area, 0, paragraph.line_count(padded_width) as u16);
-        let padded = Rect {
-            x: inner.x + H_PAD,
-            width: inner.width.saturating_sub(H_PAD * 2),
-            ..inner
-        };
+        let padded = inset(inner, H_PAD);
         frame.render_widget(paragraph, padded);
         popup
     }

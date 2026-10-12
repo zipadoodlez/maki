@@ -1,6 +1,6 @@
 use crate::components::ModalScroll;
 use crate::components::Overlay;
-use crate::components::modal::{BORDER, Dimension, Modal};
+use crate::components::modal::{BORDER, Dimension, Modal, inset};
 use crate::components::scrollbar::render_vertical_scrollbar;
 use crate::components::streaming_content::StreamingContent;
 use crate::components::thinking;
@@ -160,11 +160,7 @@ impl BtwModal {
             .wrap(Wrap { trim: false })
             .line_count(padded_width) as u16;
         let (popup, inner) = modal.render(frame, area, 0, total);
-        let padded = Rect {
-            x: inner.x + H_PAD,
-            width: inner.width.saturating_sub(H_PAD * 2),
-            ..inner
-        };
+        let padded = inset(inner, H_PAD);
         let viewport_h = padded.height;
         self.scroll.update_dimensions(total, viewport_h);
         let scroll = self.scroll.offset();

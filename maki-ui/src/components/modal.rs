@@ -16,6 +16,15 @@ pub fn fit(preferred: Dimension, min: u16, total: u16) -> u16 {
     preferred.resolve(total).max(min).min(total)
 }
 
+/// The rect inside `rect` after `pad` on each side.
+pub fn inset(rect: Rect, pad: u16) -> Rect {
+    Rect {
+        x: rect.x + pad,
+        width: rect.width.saturating_sub(pad * 2),
+        ..rect
+    }
+}
+
 pub struct Modal<'a> {
     pub title: &'a str,
     pub width: Dimension,
