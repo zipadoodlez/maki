@@ -2695,6 +2695,31 @@ fn append_permission_rule_with_global(
     }
 }
 
+/// Returns whether the file had to be created, so the caller can record a
+/// freshly written project file.
+fn write_permissions(
+    path: &Path,
+    tool: &ToolKey,
+    scope: Option<&str>,
+    effect: Effect,
+) -> Result<bool, String> {
+    let existing = fs::read_to_string(path).ok();
+    let mut doc: toml_edit::DocumentMut = existing
+        .as_deref()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+
+    insert_permission_entry(&mut doc, tool, scope, effect)?;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    maki_storage::atomic_write(path, doc.to_string().as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(existing.is_none())
+}
+
 fn append_global_permission(
     tool: &ToolKey,
     scope: Option<&str>,
@@ -2704,19 +2729,7 @@ fn append_global_permission(
     let path = global
         .ok_or_else(|| "cannot determine home directory".to_string())?
         .join(PERMISSIONS_FILE);
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut = content
-        .parse()
-        .map_err(|e| format!("failed to parse permissions: {e}"))?;
-
-    insert_permission_entry(&mut doc, tool, scope, effect)?;
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create config dir: {e}"))?;
-    }
-    maki_storage::atomic_write(&path, doc.to_string().as_bytes())
-        .map_err(|e| format!("cannot write permissions: {e}"))?;
-    Ok(())
+    write_permissions(&path, tool, scope, effect).map(|_| ())
 }
 
 fn append_project_permission(
@@ -2730,21 +2743,7 @@ fn append_project_permission(
     let Some(path) = project_config.gated_path(GatedFile::Permissions) else {
         return Err(UNTRUSTED_PROJECT_WRITE.to_string());
     };
-    let existing = fs::read_to_string(&path).ok();
-    let mut doc: toml_edit::DocumentMut = existing
-        .as_deref()
-        .unwrap_or_default()
-        .parse()
-        .map_err(|e| format!("failed to parse .maki/{PERMISSIONS_FILE}: {e}"))?;
-
-    insert_permission_entry(&mut doc, tool, scope, effect)?;
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("cannot create .maki dir: {e}"))?;
-    }
-    maki_storage::atomic_write(&path, doc.to_string().as_bytes())
-        .map_err(|e| format!("cannot write .maki/{PERMISSIONS_FILE}: {e}"))?;
-    if existing.is_none() {
+    if write_permissions(&path, tool, scope, effect)? {
         project::record_written_file(project_config, PERMISSIONS_FILE);
     }
     Ok(())
