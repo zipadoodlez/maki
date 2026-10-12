@@ -321,7 +321,7 @@ impl FilePickerModal {
             width: Dimension::Percent(WIDTH_PERCENT),
             height: Dimension::Percent(MAX_HEIGHT_PERCENT),
         };
-        let (popup, inner) = modal.render(frame, area, content_rows + SEARCH_ROW);
+        let (popup, inner) = modal.render(frame, area, 0, content_rows + SEARCH_ROW);
         s.inner_area = inner;
         s.viewport_height = inner.height.saturating_sub(SEARCH_ROW) as usize;
         ensure_visible(s);

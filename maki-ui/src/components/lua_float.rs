@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::animation::{animation_elapsed_ms, spinner_str};
+use crate::components::modal::fit_width;
 use crate::components::split_layout::SplitReq;
 use crate::components::{
     Overlay,
@@ -753,11 +754,7 @@ fn effective_height(config: &FloatConfig, area: Rect, caret: Option<Position>) -
 /// popup lists its keys, and a key cut off there is one the user never learns.
 /// Doing it here also spares every plugin from measuring our footer layout.
 fn float_width(config: &FloatConfig, area: Rect) -> u16 {
-    config
-        .width
-        .resolve(area.width)
-        .max(chrome_width(config))
-        .min(area.width)
+    fit_width(config.width, chrome_width(config), area.width)
 }
 
 /// Title and footer are drawn on the border, so a borderless window has none.

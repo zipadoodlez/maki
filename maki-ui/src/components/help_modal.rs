@@ -201,12 +201,13 @@ impl HelpModal {
         }
 
         let total = lines.len() as u16;
+        let content_cols = lines.iter().map(Line::width).max().unwrap_or(0) as u16;
         let modal = Modal {
             title: TITLE,
             width: Dimension::Percent(50),
             height: Dimension::Percent(80),
         };
-        let (popup, inner) = modal.render(frame, area, total);
+        let (popup, inner) = modal.render(frame, area, content_cols, total);
         let viewport_h = inner.height;
         self.scroll.update_dimensions(total, viewport_h);
         let scroll = self.scroll.offset();

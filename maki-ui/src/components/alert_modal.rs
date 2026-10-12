@@ -53,14 +53,13 @@ impl AlertModal {
             .chain([Line::default(), hint_line(HINTS), Line::default()])
             .collect();
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-        let padded_width = (area.width as u32 * WIDTH_PERCENT as u32 / 100)
-            .saturating_sub((BORDER_WIDTH + H_PAD * 2) as u32) as u16;
         let modal = Modal {
             title: TITLE,
             width: Dimension::Percent(WIDTH_PERCENT),
             height: Dimension::Percent(MAX_HEIGHT_PERCENT),
         };
-        let (popup, inner) = modal.render(frame, area, paragraph.line_count(padded_width) as u16);
+        let padded_width = modal.width(area, 0).saturating_sub(BORDER_WIDTH + H_PAD * 2);
+        let (popup, inner) = modal.render(frame, area, 0, paragraph.line_count(padded_width) as u16);
         let padded = Rect {
             x: inner.x + H_PAD,
             width: inner.width.saturating_sub(H_PAD * 2),

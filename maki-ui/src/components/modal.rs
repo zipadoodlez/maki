@@ -8,6 +8,13 @@ use ratatui::widgets::{Block, BorderType, Clear};
 pub use maki_lua::Dimension;
 
 pub const CHROME_LINES: u16 = 2;
+const BORDER: u16 = 2;
+
+/// The width that keeps `min_cols` visible: never below the preferred width,
+/// never above the screen.
+pub fn fit_width(preferred: Dimension, min_cols: u16, screen: u16) -> u16 {
+    preferred.resolve(screen).max(min_cols).min(screen)
+}
 
 pub struct Modal<'a> {
     pub title: &'a str,
@@ -16,7 +23,19 @@ pub struct Modal<'a> {
 }
 
 impl Modal<'_> {
-    pub fn render(&self, frame: &mut Frame, area: Rect, content_height: u16) -> (Rect, Rect) {
+    /// The popup width: as wide as the content needs, never narrower than the
+    /// preferred width, never wider than the screen.
+    pub fn width(&self, screen: Rect, content_cols: u16) -> u16 {
+        fit_width(self.width, content_cols + BORDER, screen.width)
+    }
+
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        content_cols: u16,
+        content_height: u16,
+    ) -> (Rect, Rect) {
         let total_h = (content_height + CHROME_LINES)
             .min(self.height.resolve(area.height))
             .max(CHROME_LINES + 1);
@@ -24,7 +43,7 @@ impl Modal<'_> {
         let [popup] = Layout::vertical([Constraint::Length(total_h)])
             .flex(Flex::Center)
             .areas(area);
-        let [popup] = Layout::horizontal([Constraint::Length(self.width.resolve(area.width))])
+        let [popup] = Layout::horizontal([Constraint::Length(self.width(area, content_cols))])
             .flex(Flex::Center)
             .areas(popup);
 

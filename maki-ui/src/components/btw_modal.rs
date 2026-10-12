@@ -148,20 +148,19 @@ impl BtwModal {
             return Rect::default();
         }
 
-        let border_chrome: u16 = 2;
-        let padded_width = (area.width as u32 * WIDTH_PERCENT as u32 / 100)
-            .saturating_sub((border_chrome + H_PAD * 2) as u32) as u16;
-
-        let lines = self.body_lines(padded_width);
-        let total = Paragraph::new(lines.clone())
-            .wrap(Wrap { trim: false })
-            .line_count(padded_width) as u16;
         let modal = Modal {
             title: TITLE,
             width: Dimension::Percent(WIDTH_PERCENT),
             height: Dimension::Percent(MAX_HEIGHT_PERCENT),
         };
-        let (popup, inner) = modal.render(frame, area, total);
+        let border_chrome: u16 = 2;
+        let padded_width = modal.width(area, 0).saturating_sub(border_chrome + H_PAD * 2);
+
+        let lines = self.body_lines(padded_width);
+        let total = Paragraph::new(lines.clone())
+            .wrap(Wrap { trim: false })
+            .line_count(padded_width) as u16;
+        let (popup, inner) = modal.render(frame, area, 0, total);
         let padded = Rect {
             x: inner.x + H_PAD,
             width: inner.width.saturating_sub(H_PAD * 2),

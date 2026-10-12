@@ -210,7 +210,7 @@ impl SearchModal {
             width: Dimension::Percent(MODAL_WIDTH_PERCENT),
             height: Dimension::Percent(MODAL_MAX_HEIGHT_PERCENT),
         };
-        let (popup, inner) = modal.render(frame, area, content_rows + SEARCH_ROW);
+        let (popup, inner) = modal.render(frame, area, 0, content_rows + SEARCH_ROW);
         let viewport_h = inner.height.saturating_sub(SEARCH_ROW) as usize;
         self.viewport_height = viewport_h;
 

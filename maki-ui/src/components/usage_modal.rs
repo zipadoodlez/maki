@@ -121,7 +121,7 @@ impl UsageModal {
             width: Dimension::Percent(60),
             height: Dimension::Percent(70),
         };
-        let (popup, inner) = modal.render(frame, area, total);
+        let (popup, inner) = modal.render(frame, area, 0, total);
         let viewport_h = inner.height;
         self.scroll.update_dimensions(total, viewport_h);
         let scroll = self.scroll.offset();

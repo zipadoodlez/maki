@@ -670,7 +670,7 @@ impl LoginPicker {
                     width: Dimension::Percent(65),
                     height: Dimension::Percent(40),
                 };
-                let (popup, inner) = modal.render(frame, area, 2);
+                let (popup, inner) = modal.render(frame, area, 0, 2);
                 let t = theme::current();
                 let hint = Span::styled("Enter provider name, then Enter", t.input_placeholder);
                 let input_line = input_line_with_cursor(input);
@@ -689,7 +689,7 @@ impl LoginPicker {
                     width: Dimension::Percent(65),
                     height: Dimension::Percent(40),
                 };
-                let (popup, inner) = modal.render(frame, area, 2);
+                let (popup, inner) = modal.render(frame, area, 0, 2);
                 let t = theme::current();
                 let hint = Span::styled("Enter base URL, then Enter", t.input_placeholder);
                 let input_line = input_line_with_cursor(input);
@@ -711,7 +711,7 @@ impl LoginPicker {
                     width: Dimension::Percent(65),
                     height: Dimension::Percent(40),
                 };
-                let (popup, inner) = modal.render(frame, area, 2);
+                let (popup, inner) = modal.render(frame, area, 0, 2);
                 let t = theme::current();
                 let hint = Span::styled("Edit host URL, or Enter to confirm", t.input_placeholder);
                 let input_line = input_line_with_cursor(input);
@@ -734,7 +734,7 @@ impl LoginPicker {
                     width: Dimension::Percent(65),
                     height: Dimension::Percent(40),
                 };
-                let (popup, inner) = modal.render(frame, area, 2);
+                let (popup, inner) = modal.render(frame, area, 0, 2);
                 let t = theme::current();
                 let hint_text = if *api_key_optional {
                     "Paste API key, or Enter to skip"
@@ -757,7 +757,7 @@ impl LoginPicker {
                     width: Dimension::Percent(50),
                     height: Dimension::Percent(30),
                 };
-                let (popup, inner) = modal.render(frame, area, 1);
+                let (popup, inner) = modal.render(frame, area, 0, 1);
                 frame.render_widget(
                     ratatui::widgets::Paragraph::new(Line::from(message.clone()))
                         .style(Style::new().bg(theme::current().background)),
