@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::animation::{animation_elapsed_ms, spinner_str};
-use crate::components::modal::fit_width;
+use crate::components::modal::fit;
 use crate::components::split_layout::SplitReq;
 use crate::components::{
     Overlay,
@@ -739,7 +739,7 @@ fn caret_rect(caret: Position, w: u16, h: u16, area: Rect) -> (Rect, bool) {
 /// every anchor but [`Anchor::InputCaret`]: that one is trimmed to the side
 /// of the caret it sits on.
 fn effective_height(config: &FloatConfig, area: Rect, caret: Option<Position>) -> u16 {
-    let h = config.height.resolve(area.height).min(area.height);
+    let h = fit(config.height, 0, area.height);
     match caret {
         Some(caret) if config.anchor == Anchor::InputCaret => {
             caret_rect(caret, float_width(config, area), h, area)
@@ -754,7 +754,7 @@ fn effective_height(config: &FloatConfig, area: Rect, caret: Option<Position>) -
 /// popup lists its keys, and a key cut off there is one the user never learns.
 /// Doing it here also spares every plugin from measuring our footer layout.
 fn float_width(config: &FloatConfig, area: Rect) -> u16 {
-    fit_width(config.width, chrome_width(config), area.width)
+    fit(config.width, chrome_width(config), area.width)
 }
 
 /// Title and footer are drawn on the border, so a borderless window has none.
@@ -801,7 +801,7 @@ fn resolve_rect(
     caret: Option<Position>,
 ) -> Rect {
     let w = float_width(config, area);
-    let h = config.height.resolve(area.height).min(area.height);
+    let h = fit(config.height, 0, area.height);
     let (left, top) = (area.x, area.y);
     let (right, bottom) = (area.x + area.width, area.y + area.height);
     let centred = || {

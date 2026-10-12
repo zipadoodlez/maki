@@ -10,10 +10,10 @@ pub use maki_lua::Dimension;
 /// The border, in cells, on each axis.
 pub const BORDER: u16 = 2;
 
-/// The width that keeps `min_cols` visible: never below the preferred width,
-/// never above the screen.
-pub fn fit_width(preferred: Dimension, min_cols: u16, screen: u16) -> u16 {
-    preferred.resolve(screen).max(min_cols).min(screen)
+/// The size on one axis that keeps `min` visible: never below the preferred
+/// size, never above the screen.
+pub fn fit(preferred: Dimension, min: u16, total: u16) -> u16 {
+    preferred.resolve(total).max(min).min(total)
 }
 
 pub struct Modal<'a> {
@@ -26,7 +26,7 @@ impl Modal<'_> {
     /// The popup width: as wide as the content needs, never narrower than the
     /// preferred width, never wider than the screen.
     pub fn width(&self, screen: Rect, content_cols: u16) -> u16 {
-        fit_width(self.width, content_cols + BORDER, screen.width)
+        fit(self.width, content_cols + BORDER, screen.width)
     }
 
     pub fn render(
