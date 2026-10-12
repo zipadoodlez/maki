@@ -1,6 +1,6 @@
 use crate::components::ModalScroll;
 use crate::components::Overlay;
-use crate::components::modal::{Dimension, Modal};
+use crate::components::modal::{BORDER, Dimension, Modal};
 use crate::components::scrollbar::render_vertical_scrollbar;
 use crate::components::streaming_content::StreamingContent;
 use crate::components::thinking;
@@ -153,8 +153,7 @@ impl BtwModal {
             width: Dimension::Percent(WIDTH_PERCENT),
             height: Dimension::Percent(MAX_HEIGHT_PERCENT),
         };
-        let border_chrome: u16 = 2;
-        let padded_width = modal.width(area, 0).saturating_sub(border_chrome + H_PAD * 2);
+        let padded_width = modal.width(area, 0).saturating_sub(BORDER + H_PAD * 2);
 
         let lines = self.body_lines(padded_width);
         let total = Paragraph::new(lines.clone())

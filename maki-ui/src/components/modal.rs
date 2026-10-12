@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, BorderType, Clear};
 
 pub use maki_lua::Dimension;
 
-pub const CHROME_LINES: u16 = 2;
-const BORDER: u16 = 2;
+/// The border, in cells, on each axis.
+pub const BORDER: u16 = 2;
 
 /// The width that keeps `min_cols` visible: never below the preferred width,
 /// never above the screen.
@@ -36,9 +36,9 @@ impl Modal<'_> {
         content_cols: u16,
         content_height: u16,
     ) -> (Rect, Rect) {
-        let total_h = (content_height + CHROME_LINES)
+        let total_h = (content_height + BORDER)
             .min(self.height.resolve(area.height))
-            .max(CHROME_LINES + 1);
+            .max(BORDER + 1);
 
         let [popup] = Layout::vertical([Constraint::Length(total_h)])
             .flex(Flex::Center)
