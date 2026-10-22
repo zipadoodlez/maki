@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::app::tasks::{TaskOutcome, TaskStatus};
 use crate::components::input::Submission;
@@ -353,6 +354,14 @@ impl Chat {
 
     pub fn tick(&mut self) -> Dirty {
         self.messages_panel.tick()
+    }
+
+    pub fn advance_frame(&mut self, now: Instant) -> Dirty {
+        self.messages_panel.advance_frame(now)
+    }
+
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.messages_panel.next_deadline()
     }
 
     pub fn cadence(&self) -> Cadence {

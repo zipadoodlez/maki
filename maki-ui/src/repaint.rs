@@ -39,6 +39,10 @@ pub const IDLE_POLL: Duration = Duration::from_millis(100);
 /// Fast enough that per-character reveals and colour fades look continuous.
 const SMOOTH_FRAME: Duration = Duration::from_millis(16);
 
+/// One row of a tool result at 12 rows/s. Retimed by nothing: the reveal keeps
+/// its pace whatever `ui.fps` is set to.
+pub const REVEAL_FRAME: Duration = Duration::from_nanos(1_000_000_000 / 12);
+
 /// What every poller in the crate is tested against, so the two invariants
 /// read the same wherever they are checked.
 #[cfg(test)]
@@ -132,42 +136,63 @@ impl<T> Default for Watch<T> {
 
 /// How soon the loop has to come back when nothing is due to wake it.
 ///
-/// Two very different things ask for this. Pixels that move on their own
-/// ([`Cadence::SPINNER`], [`Cadence::SMOOTH`]) owe a frame once the time is up.
-/// A worker mid-answer ([`Cadence::PENDING`]) owes none: looking again is the
-/// only way to find the result, and the frame follows only if the poll came
-/// back [`Dirty`].
+/// Four sources with different rules. Pixels that move on their own
+/// ([`Cadence::SPINNER`], [`Cadence::SMOOTH`], [`Cadence::REVEAL`]) owe a frame
+/// once the time is up. A worker mid-answer ([`Cadence::PENDING`]) owes none:
+/// looking again is the only way to find the result, and the frame follows only
+/// if the poll came back [`Dirty`].
 ///
 /// Anything a component notices by itself is a [`Dirty`]. Calling that a
 /// cadence pins the loop at full frame rate for as long as it lasts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Cadence {
-    frame: Option<Duration>,
-    moves: bool,
+    /// Typewriter reveals and colour fades. `ui.fps` retimes this one.
+    smooth: Option<Duration>,
+    /// Spinner glyphs. Moving, but never retimed below its own glyph frame.
+    motion: Option<Duration>,
+    /// A worker mid-answer. Polled, never painted on the clock alone.
+    poll: Option<Duration>,
+    /// Tool rows landing one at a time. Never retimed.
+    reveal: Option<Duration>,
 }
 
 impl Cadence {
     /// Nothing to come back for. The loop sleeps until something happens.
     pub const IDLE: Self = Self {
-        frame: None,
-        moves: false,
+        smooth: None,
+        motion: None,
+        poll: None,
+        reveal: None,
     };
     /// Spinner glyphs, which advance once per [`SPINNER_FRAME`]. Painting any
     /// faster redraws the same glyph.
     pub const SPINNER: Self = Self {
-        frame: Some(SPINNER_FRAME),
-        moves: true,
+        smooth: None,
+        motion: Some(SPINNER_FRAME),
+        poll: None,
+        reveal: None,
     };
     /// Typewriter reveals and colour fades, which change every frame.
     pub const SMOOTH: Self = Self {
-        frame: Some(SMOOTH_FRAME),
-        moves: true,
+        smooth: Some(SMOOTH_FRAME),
+        motion: None,
+        poll: None,
+        reveal: None,
     };
     /// A worker mid-answer, looked at again on the smooth frame so a result
     /// landing between two frames is on screen in the next one.
     pub const PENDING: Self = Self {
-        frame: Some(SMOOTH_FRAME),
-        moves: false,
+        smooth: None,
+        motion: None,
+        poll: Some(SMOOTH_FRAME),
+        reveal: None,
+    };
+    /// A tool result revealing one row at a time.
+    pub const REVEAL: Self = Self {
+        smooth: None,
+        motion: None,
+        poll: None,
+        reveal: Some(REVEAL_FRAME),
     };
 
     /// `cadence` while `applies`, else [`Cadence::IDLE`].
@@ -175,36 +200,66 @@ impl Cadence {
         if applies { cadence } else { Self::IDLE }
     }
 
-    /// Combines both axes: the soonest anyone has to be looked at again, and
-    /// motion if anyone moves. A single scale would let a pending poll outrank
-    /// a typewriter and freeze it.
+    /// Combines every source: the soonest deadline and whether any of them
+    /// moves on the clock alone.
     pub fn any(cadences: impl IntoIterator<Item = Self>) -> Self {
         cadences.into_iter().fold(Self::IDLE, |a, b| Self {
-            frame: match (a.frame, b.frame) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            },
-            moves: a.moves | b.moves,
+            smooth: soonest(a.smooth, b.smooth),
+            motion: soonest(a.motion, b.motion),
+            poll: soonest(a.poll, b.poll),
+            reveal: soonest(a.reveal, b.reveal),
         })
+    }
+
+    /// Applies the configured smooth frame. Spinner glyphs are clamped so a low
+    /// fps never makes the loop ask for them faster than it could paint; polls
+    /// and the reveal keep their own pace.
+    pub fn retime(self, smooth: Duration) -> Self {
+        Self {
+            smooth: self.smooth.map(|_| smooth),
+            motion: self.motion.map(|motion| motion.max(smooth)),
+            ..self
+        }
     }
 
     /// How long the loop may sleep, or `None` to sleep until something wakes
     /// it.
     pub fn frame(self) -> Option<Duration> {
-        self.frame
+        [self.smooth, self.motion, self.poll, self.reveal]
+            .into_iter()
+            .flatten()
+            .min()
     }
 
     /// Whether the next frame differs from this one on the clock alone.
     pub fn moves(self) -> bool {
-        self.moves
+        self.smooth.is_some() || self.motion.is_some() || self.reveal.is_some()
     }
 }
+
+fn soonest(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Two cadences are equal when they ask for the same next frame and the same
+/// motion; which source supplied the frame is an implementation detail.
+impl PartialEq for Cadence {
+    fn eq(&self, other: &Self) -> bool {
+        self.frame() == other.frame() && self.moves() == other.moves()
+    }
+}
+
+impl Eq for Cadence {}
 
 #[cfg(test)]
 mod tests {
     use super::expect::{OWED, QUIET};
     use super::{Cadence, Dirty, Watch};
     use std::sync::Arc;
+    use std::time::Duration;
 
     const EXPECT_SETTLED: &str = "nothing to combine must leave the loop asleep";
     const EXPECT_SOONEST: &str = "the soonest source must win over the whole list";
@@ -243,6 +298,32 @@ mod tests {
         let mixed = Cadence::any([Cadence::SPINNER, Cadence::PENDING]);
         assert_eq!(mixed.frame(), Cadence::PENDING.frame(), "{EXPECT_SOONEST}");
         assert!(mixed.moves(), "{EXPECT_MOTION_KEPT}");
+    }
+
+    #[test]
+    fn retime_moves_only_the_smooth_source() {
+        let faster = Duration::from_millis(4);
+        let slower = Duration::from_millis(83);
+
+        assert_eq!(Cadence::SMOOTH.retime(faster).frame(), Some(faster));
+        assert_eq!(Cadence::SMOOTH.retime(slower).frame(), Some(slower));
+
+        assert_eq!(
+            Cadence::PENDING.retime(faster).frame(),
+            Cadence::PENDING.frame()
+        );
+        assert_eq!(
+            Cadence::REVEAL.retime(faster).frame(),
+            Cadence::REVEAL.frame()
+        );
+        assert_eq!(
+            Cadence::SPINNER.retime(faster).frame(),
+            Cadence::SPINNER.frame()
+        );
+        assert_eq!(Cadence::SPINNER.retime(slower).frame(), Some(slower));
+
+        assert!(Cadence::REVEAL.retime(faster).moves());
+        assert!(!Cadence::PENDING.retime(faster).moves());
     }
 
     /// A generation counter answers this too, as long as every publisher

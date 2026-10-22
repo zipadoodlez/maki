@@ -18,6 +18,8 @@ use color_eyre::eyre::{Context, eyre};
 use crossterm::event::{
     Event, KeyEvent, KeyEventKind, MouseButton, MouseEvent as CtMouseEvent, MouseEventKind,
 };
+use crossterm::queue;
+use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use maki_agent::command::CustomCommand;
 use maki_agent::permissions::PermissionManager;
 use maki_agent::session::Resumed;
@@ -25,7 +27,7 @@ use maki_agent::{
     AgentConfig, AgentEvent, CancelToken, Envelope, McpCommand, McpConfigErrors, McpHandle, mcp,
 };
 use maki_config::project::TrustQuestion;
-use maki_config::{ModelPolicy, ProjectConfig, UiConfig};
+use maki_config::{MAX_FPS, MIN_FPS, ModelPolicy, ProjectConfig, UiConfig};
 use maki_lua::session_snapshot::{
     MODE_BUILD, MODE_PLAN, STATUS_IDLE, STATUS_NEEDS_INPUT, STATUS_WORKING, SessionQueueSnapshot,
     SessionSnapshot,
@@ -502,6 +504,9 @@ pub(crate) struct EventLoop<'t> {
     /// without this a second `/packupdate` would race the first over the same
     /// clones and locks.
     pack_running: bool,
+    /// Gap between smooth frames, from `ui.fps`. Retimes [`Cadence::SMOOTH`];
+    /// spinner, pending poll and reveal keep their own cadences.
+    smooth_interval: Duration,
     _model_fetch_task: smol::Task<()>,
 }
 
@@ -647,6 +652,7 @@ impl<'t> EventLoop<'t> {
         let storage_writer = Arc::new(StorageWriter::new(storage.clone(), bg.warn_tx.clone()));
 
         let notifier = terminal::TerminalNotifier::new(ui_config.notifications);
+        let smooth_interval = smooth_interval(ui_config.fps);
         let ctx = SpawnCtx {
             storage,
             config,
@@ -722,6 +728,7 @@ impl<'t> EventLoop<'t> {
             pack_tx,
             pack_rx,
             pack_running: false,
+            smooth_interval,
             _model_fetch_task: bg.task,
         })
     }
@@ -741,18 +748,31 @@ impl<'t> EventLoop<'t> {
     /// and the hide that goes with it, so a widget that does ask for one
     /// cannot bring the block cursor back.
     fn paint(&mut self) -> Result<()> {
+        let _ = self.sessions[self.focused]
+            .app
+            .advance_frame(Instant::now());
+        queue!(self.terminal.backend_mut(), BeginSynchronizedUpdate)?;
         let app = &mut self.sessions[self.focused].app;
         let mut cursor = None;
-        self.terminal.draw(|f| {
-            cursor = app.view(f);
-            color_compat::downgrade_if_needed(f.buffer_mut());
-        })?;
-        if let Some(pos) = cursor {
-            self.terminal.hide_cursor()?;
-            self.terminal.set_cursor_position(pos)?;
-            self.terminal.backend_mut().flush()?;
-        }
-        Ok(())
+        let drawn = self
+            .terminal
+            .draw(|f| {
+                cursor = app.view(f);
+                color_compat::downgrade_if_needed(f.buffer_mut());
+            })
+            .map(|_| ());
+        let cursor_result = (|| -> Result<()> {
+            if let Some(pos) = cursor {
+                self.terminal.hide_cursor()?;
+                self.terminal.set_cursor_position(pos)?;
+                self.terminal.backend_mut().flush()?;
+            }
+            Ok(())
+        })();
+        queue!(self.terminal.backend_mut(), EndSynchronizedUpdate)?;
+        self.terminal.backend_mut().flush()?;
+        drawn?;
+        cursor_result
     }
 
     pub(crate) fn run(mut self, initial_prompt: Option<String>) -> Result<ShutdownReport> {
@@ -795,8 +815,19 @@ impl<'t> EventLoop<'t> {
 
             // Sleeping a whole frame instead of a fraction of one is what
             // makes a spinner cost 12 paints a second instead of 62.
-            let cadence = self.sessions[self.focused].app.cadence();
-            match self.next_wake(cadence.frame().unwrap_or(IDLE_POLL)) {
+            let cadence = self.sessions[self.focused]
+                .app
+                .cadence()
+                .retime(self.smooth_interval);
+            let now = Instant::now();
+            let timeout = cadence.frame().unwrap_or(IDLE_POLL);
+            let timeout = self.sessions[self.focused]
+                .app
+                .next_deadline()
+                .map_or(timeout, |deadline| {
+                    timeout.min(deadline.saturating_duration_since(now))
+                });
+            match self.next_wake(timeout) {
                 // Any event can change the screen, so paint after handling it
                 // rather than asking every handler to prove it did.
                 Some(wake) => {
@@ -1982,6 +2013,10 @@ impl<'t> EventLoop<'t> {
     }
 }
 
+fn smooth_interval(fps: u32) -> Duration {
+    Duration::from_secs_f64(1.0 / f64::from(fps.clamp(MIN_FPS, MAX_FPS)))
+}
+
 fn scroll_delta(kind: MouseEventKind, lines: u32) -> i32 {
     if kind == MouseEventKind::ScrollUp {
         lines as i32
@@ -1999,6 +2034,16 @@ mod tests {
 
     const OBSERVATION: &str = "failed";
     const SHELL_RESULT: &str = "command finished";
+
+    #[test]
+    fn smooth_interval_clamps_to_the_supported_fps_range() {
+        assert_eq!(smooth_interval(0), smooth_interval(maki_config::MIN_FPS));
+        assert_eq!(smooth_interval(1000), smooth_interval(maki_config::MAX_FPS));
+        assert_eq!(
+            smooth_interval(maki_config::DEFAULT_FPS),
+            Duration::from_secs_f64(1.0 / f64::from(maki_config::DEFAULT_FPS))
+        );
+    }
 
     fn done_event() -> AgentEvent {
         AgentEvent::Done {

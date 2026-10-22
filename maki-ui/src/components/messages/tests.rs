@@ -13,6 +13,7 @@ use maki_agent::{
 use maki_config::DEFAULT_THINKING_LINES;
 use maki_providers::ImageMediaType;
 use ratatui::backend::TestBackend;
+use ratatui::text::Line;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::time::Duration;
@@ -140,6 +141,150 @@ fn done(id: &str) -> ToolDoneEvent {
         annotation: None,
         written_path: None,
     }
+}
+
+fn done_with_output(id: &str, output: &str) -> ToolDoneEvent {
+    ToolDoneEvent {
+        output: Arc::new(ToolOutput::Plain(output.into())),
+        ..done(id)
+    }
+}
+
+const REVEAL_OUTPUT_LINES: usize = 12;
+
+fn reveal_text() -> String {
+    "line\n".repeat(REVEAL_OUTPUT_LINES)
+}
+
+fn visible_height(panel: &MessagesPanel, id: &str) -> u16 {
+    let index = panel.cache.find_by_tool_id(id).unwrap();
+    panel
+        .cache
+        .get(index)
+        .unwrap()
+        .visible_text_height(VIEW_WIDTH)
+}
+
+#[test]
+fn a_tool_output_reveals_one_row_per_deadline() {
+    let mut panel = panel_with_tools(&[("t1", BASH_TOOL_NAME)]);
+    rebuild(&mut panel);
+    let header = visible_height(&panel, "t1");
+    panel.tool_done(done_with_output("t1", &reveal_text()));
+
+    let due = panel
+        .next_deadline()
+        .expect("a finished tool arms a reveal");
+    let before = due.checked_sub(Duration::from_nanos(1)).unwrap();
+    assert_eq!(panel.advance_frame(before), Dirty::NO);
+    assert_eq!(visible_height(&panel, "t1"), header);
+
+    assert_eq!(panel.advance_frame(due), Dirty::YES);
+    assert_eq!(visible_height(&panel, "t1"), header.saturating_add(1));
+    assert_eq!(panel.cadence().frame(), Some(crate::repaint::REVEAL_FRAME));
+}
+
+#[test]
+fn a_tool_output_finishes_its_reveal() {
+    let mut panel = panel_with_tools(&[("t1", BASH_TOOL_NAME)]);
+    rebuild(&mut panel);
+    panel.tool_done(done_with_output("t1", &reveal_text()));
+    let index = panel.cache.find_by_tool_id("t1").unwrap();
+    let full = panel.cache.get(index).unwrap().text_height(VIEW_WIDTH);
+
+    while let Some(due) = panel.next_deadline() {
+        let _ = panel.advance_frame(due);
+    }
+
+    assert_eq!(visible_height(&panel, "t1"), full);
+    assert_eq!(panel.next_deadline(), None);
+}
+
+#[test]
+fn growth_above_a_reveal_does_not_consume_it() {
+    let mut panel = panel_with_tools(&[("t1", BASH_TOOL_NAME), ("t2", BASH_TOOL_NAME)]);
+    rebuild(&mut panel);
+    panel.tool_done(done_with_output("t2", &reveal_text()));
+    let due = panel.next_deadline().unwrap();
+    let before = visible_height(&panel, "t2");
+
+    let above = panel.cache.find_by_tool_id("t1").unwrap();
+    panel
+        .cache
+        .get_mut(above)
+        .unwrap()
+        .set_lines(vec![Line::default(); 10]);
+
+    assert_eq!(panel.advance_frame(due), Dirty::YES);
+    assert_eq!(visible_height(&panel, "t2"), before + 1);
+}
+
+#[test]
+fn expanding_the_revealing_tool_finishes_it() {
+    let mut panel = panel_with_tools(&[("t1", BASH_TOOL_NAME)]);
+    rebuild(&mut panel);
+    panel.tool_done(done_with_output("t1", &reveal_text()));
+    assert!(panel.next_deadline().is_some());
+
+    panel.rebuild_expanded_tool("t1");
+
+    assert_eq!(panel.next_deadline(), None);
+    let index = panel.cache.find_by_tool_id("t1").unwrap();
+    let segment = panel.cache.get(index).unwrap();
+    assert_eq!(
+        segment.visible_text_height(VIEW_WIDTH),
+        segment.text_height(VIEW_WIDTH)
+    );
+}
+
+#[test]
+fn a_restored_transcript_does_not_reveal_again() {
+    let mut panel = panel_with_tools(&[("t1", BASH_TOOL_NAME)]);
+    rebuild(&mut panel);
+    panel.tool_done(done_with_output("t1", &reveal_text()));
+    let messages = panel.messages.clone();
+
+    panel.load_messages(messages);
+    rebuild(&mut panel);
+
+    assert_eq!(panel.next_deadline(), None);
+    let index = panel.cache.find_by_tool_id("t1").unwrap();
+    let segment = panel.cache.get(index).unwrap();
+    assert_eq!(
+        segment.visible_text_height(VIEW_WIDTH),
+        segment.text_height(VIEW_WIDTH)
+    );
+}
+
+#[test]
+fn a_tool_that_finishes_before_its_segment_exists_still_reveals() {
+    let mut panel = MessagesPanel::new(UiConfig::default(), EventHandle::disconnected_for_test());
+    panel.tool_start(start("t1", BASH_TOOL_NAME));
+    panel.tool_done(done_with_output("t1", &reveal_text()));
+    assert!(panel.pending_reveal.is_some());
+    assert_eq!(panel.next_deadline(), None);
+
+    build_cache(&mut panel);
+
+    assert!(panel.pending_reveal.is_none());
+    assert!(panel.next_deadline().is_some());
+    let index = panel.cache.find_by_tool_id("t1").unwrap();
+    assert!(panel.cache.get(index).unwrap().is_revealing(VIEW_WIDTH));
+}
+
+#[test]
+fn two_finished_tools_reveal_in_document_order() {
+    let mut panel = panel_with_tools(&[("t1", BASH_TOOL_NAME), ("t2", BASH_TOOL_NAME)]);
+    rebuild(&mut panel);
+    panel.tool_done(done_with_output("t1", &reveal_text()));
+    panel.tool_done(done_with_output("t2", &reveal_text()));
+    let due = panel.next_deadline().unwrap();
+    let first = visible_height(&panel, "t1");
+    let second = visible_height(&panel, "t2");
+
+    let _ = panel.advance_frame(due);
+    assert_eq!(visible_height(&panel, "t1"), first + 1);
+    assert_eq!(visible_height(&panel, "t2"), second);
 }
 
 fn finish_with_live_buf(
@@ -316,6 +461,12 @@ fn scroll_up_pins_viewport_during_streaming() {
     assert_eq!(panel.scroll, pinned);
 }
 
+fn finish_reveals(panel: &mut MessagesPanel) {
+    while let Some(due) = panel.next_deadline() {
+        let _ = panel.advance_frame(due);
+    }
+}
+
 fn render_sel(
     panel: &mut MessagesPanel,
     width: u16,
@@ -324,6 +475,14 @@ fn render_sel(
 ) -> ratatui::Terminal<TestBackend> {
     let backend = TestBackend::new(width, height);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    // The first pass lets `rebuild_line_cache` build (and arm) a segment a
+    // tool event left pending. Tests then see the settled layout.
+    terminal
+        .draw(|f| {
+            panel.view(f, f.area(), has_selection, true, &[]);
+        })
+        .unwrap();
+    finish_reveals(panel);
     terminal
         .draw(|f| {
             panel.view(f, f.area(), has_selection, true, &[]);
@@ -338,6 +497,16 @@ fn render(panel: &mut MessagesPanel, width: u16, height: u16) -> ratatui::Termin
 
 fn rebuild(panel: &mut MessagesPanel) {
     render(panel, 80, 24);
+}
+
+fn build_cache(panel: &mut MessagesPanel) {
+    let backend = TestBackend::new(VIEW_WIDTH, VIEW_HEIGHT);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            panel.view(f, f.area(), false, true, &[]);
+        })
+        .unwrap();
 }
 
 #[test]

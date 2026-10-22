@@ -50,7 +50,7 @@ use maki_storage::id::{MakiId, SessionRef};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
-use crate::repaint::{Cadence, Dirty};
+use crate::repaint::{Cadence, Dirty, REVEAL_FRAME};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use tracing::warn;
@@ -114,6 +114,10 @@ pub struct MessagesPanel {
     /// Where the streaming segments start. `view` drops and rebuilds them
     /// every frame, so they always sit at the end of the cache.
     live_start: usize,
+    /// When the next tool row is due. `None` means no reveal is in flight.
+    reveal_due: Option<Instant>,
+    /// A tool finished before its segment existed; arm it when built.
+    pending_reveal: Option<String>,
 }
 
 impl MessagesPanel {
@@ -164,6 +168,8 @@ impl MessagesPanel {
             session_id: None,
             task_id: None,
             live_start: 0,
+            reveal_due: None,
+            pending_reveal: None,
         }
     }
 
@@ -218,11 +224,15 @@ impl MessagesPanel {
         };
         *slot = msg;
         self.cache.clear();
+        self.reveal_due = None;
+        self.pending_reveal = None;
     }
 
     pub fn load_messages(&mut self, msgs: Vec<DisplayMessage>) {
         self.messages = msgs;
         self.cache.clear();
+        self.reveal_due = None;
+        self.pending_reveal = None;
         self.expanded_tools.clear();
         self.lua_clicks.clear();
         self.live_bufs.clear();
@@ -304,6 +314,11 @@ impl MessagesPanel {
     }
 
     pub fn tool_done(&mut self, event: ToolDoneEvent) {
+        let from = self
+            .cache
+            .find_by_tool_id(&event.id)
+            .and_then(|i| self.cache.get(i))
+            .map_or(0, |seg| seg.visible_text_height(self.viewport_width));
         let had_live_buf = self.retire_live_buf(&event.id);
         let Some(msg) = self
             .messages
@@ -357,6 +372,16 @@ impl MessagesPanel {
         msg.tool_output = Some(event.output);
         msg.live_output = None;
         self.rebuild_tool_segment(&event.id);
+        match self.cache.find_by_tool_id(&event.id) {
+            Some(i) => {
+                let height = self.cache.get(i).unwrap().text_height(self.viewport_width);
+                if from < height {
+                    self.cache.get_mut(i).unwrap().set_reveal(from);
+                    self.reveal_due.get_or_insert(Instant::now() + REVEAL_FRAME);
+                }
+            }
+            None => self.pending_reveal = Some(event.id.clone()),
+        }
     }
 
     pub fn update_tool_summary(&mut self, tool_id: &str, summary: &str) {
@@ -693,7 +718,7 @@ impl MessagesPanel {
         let Some(seg) = self.cache.get(pos.seg) else {
             return false;
         };
-        if !seg.images.is_empty() && pos.row >= seg.text_height(width) {
+        if !seg.images.is_empty() && pos.row >= seg.visible_text_height(width) {
             return false;
         }
         let Some(tool_id) = seg.tool_id.as_deref() else {
@@ -772,6 +797,12 @@ impl MessagesPanel {
                 self.upsert_instruction_segment(parent_id, &blocks);
             }
         } else {
+            if let Some(i) = self.cache.find_by_tool_id(tool_id) {
+                self.cache.get_mut(i).unwrap().finish_reveal();
+            }
+            if !self.cache.is_revealing(self.viewport_width) {
+                self.reveal_due = None;
+            }
             self.rebuild_tool_segment(tool_id);
         }
     }
@@ -796,6 +827,31 @@ impl MessagesPanel {
         dirty
     }
 
+    /// Advances a due tool reveal by one row. Called on every paint, so extra
+    /// event paints cannot speed it up; a late paint only reschedules from now.
+    pub fn advance_frame(&mut self, now: Instant) -> Dirty {
+        let Some(due) = self.reveal_due else {
+            return Dirty::NO;
+        };
+        if now < due {
+            return Dirty::NO;
+        }
+        if self.cache.advance_reveal(self.viewport_width) {
+            self.reveal_due = self
+                .cache
+                .is_revealing(self.viewport_width)
+                .then(|| now + REVEAL_FRAME);
+            Dirty::YES
+        } else {
+            self.reveal_due = None;
+            Dirty::NO
+        }
+    }
+
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.reveal_due
+    }
+
     pub fn cadence(&self) -> Cadence {
         let smooth = self.streaming_text.is_animating()
             || self.accent.is_animating()
@@ -806,6 +862,7 @@ impl MessagesPanel {
             // `tick` reports that separately.
             Cadence::when(self.in_progress_count() > 0, Cadence::SPINNER),
             Cadence::when(smooth, Cadence::SMOOTH),
+            Cadence::when(self.reveal_due.is_some(), Cadence::REVEAL),
             Cadence::when(self.show_idle_splash(), self.idle_splash.cadence()),
         ])
     }
@@ -1425,6 +1482,11 @@ impl MessagesPanel {
                 let id = t.id.clone();
                 self.cache.push_spacer_if_needed();
                 let mut seg = Segment::with_tool(id.clone());
+                if self.pending_reveal.as_deref() == Some(id.as_str()) {
+                    seg.set_reveal(0);
+                    self.pending_reveal = None;
+                    self.reveal_due.get_or_insert(Instant::now() + REVEAL_FRAME);
+                }
                 seg.apply_highlight(tl, &self.hl_worker);
                 seg.set_images(message_images(msg));
                 self.cache.push(seg);

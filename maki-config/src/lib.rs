@@ -30,6 +30,9 @@ pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 50 * 1024;
 pub const DEFAULT_MAX_OUTPUT_LINES: usize = 2000;
 pub const DEFAULT_FLASH_DURATION_MS: u64 = 1500;
 pub const DEFAULT_TYPEWRITER_MS_PER_CHAR: u64 = 4;
+pub const DEFAULT_FPS: u32 = 60;
+pub const MIN_FPS: u32 = 12;
+pub const MAX_FPS: u32 = 240;
 pub const DEFAULT_MOUSE_SCROLL_LINES: u32 = 3;
 pub const DEFAULT_MAX_INPUT_LINES: u32 = 20;
 pub const DEFAULT_THINKING_LINES: usize = 3;
@@ -636,6 +639,7 @@ pub struct UiFileConfig {
     pub notifications: Option<NotificationMethod>,
     pub flash_duration_ms: Option<u64>,
     pub typewriter_ms_per_char: Option<u64>,
+    pub fps: Option<u32>,
     pub mouse_scroll_lines: Option<u32>,
     pub thinking_lines: Option<ThinkingLines>,
     /// Gone, replaced by `thinking_lines`. We still read it so an old config
@@ -658,6 +662,7 @@ impl UiFileConfig {
             notifications,
             flash_duration_ms,
             typewriter_ms_per_char,
+            fps,
             mouse_scroll_lines,
             thinking_lines,
             show_thinking,
@@ -1266,6 +1271,10 @@ pub struct UiConfig {
     #[config(default = DEFAULT_TYPEWRITER_MS_PER_CHAR, desc = "Typewriter effect speed (ms/char)")]
     pub typewriter_ms_per_char: u64,
 
+    #[config(default = DEFAULT_FPS, min = MIN_FPS,
+        desc = "Animation frame rate (12-240 fps); events still repaint immediately")]
+    pub fps: u32,
+
     #[config(default = DEFAULT_MOUSE_SCROLL_LINES, min = MIN_MOUSE_SCROLL_LINES, desc = "Lines per mouse wheel scroll")]
     pub mouse_scroll_lines: u32,
 
@@ -1305,6 +1314,7 @@ impl UiConfig {
             typewriter_ms_per_char: f
                 .typewriter_ms_per_char
                 .unwrap_or(DEFAULT_TYPEWRITER_MS_PER_CHAR),
+            fps: f.fps.unwrap_or(DEFAULT_FPS),
             mouse_scroll_lines: f.mouse_scroll_lines.unwrap_or(DEFAULT_MOUSE_SCROLL_LINES),
             max_input_lines: f.max_input_lines.unwrap_or(DEFAULT_MAX_INPUT_LINES),
             thinking_lines: f
@@ -3318,6 +3328,35 @@ mod tests {
             config.ui.tool_output_lines.index,
             ToolOutputLines::DEFAULT.index
         );
+    }
+
+    #[test]
+    fn fps_defaults_and_has_a_floor() {
+        assert_eq!(UiConfig::default().fps, DEFAULT_FPS);
+
+        let raw = RawConfig {
+            ui: UiFileConfig {
+                fps: Some(MIN_FPS - 1),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = raw.into_config(&[]).unwrap();
+        assert_eq!(config.ui.fps, MIN_FPS - 1);
+        let err = config.ui.validate_all().unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigError::BelowMinimum { field: "fps", .. }
+        ));
+
+        let raw = RawConfig {
+            ui: UiFileConfig {
+                fps: Some(MAX_FPS),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(raw.into_config(&[]).unwrap().ui.fps, MAX_FPS);
     }
 
     #[test_case("provider", "connect_timeout_secs", 0 ; "provider_zero_connect_timeout")]

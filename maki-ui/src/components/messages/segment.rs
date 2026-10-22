@@ -64,6 +64,9 @@ pub(super) struct Segment {
     /// What a click can expand. On thinking, `output` means it is drawn
     /// collapsed: the click answers what the reader sees, not the config.
     pub truncation: SectionFlags,
+    /// Rows of this segment currently shown. `None` means the whole segment is
+    /// visible; only a tool result that lands whole gets this set.
+    reveal: Option<u16>,
     cached_height: Cell<Option<CachedHeight>>,
     pending_highlight: Option<u64>,
     highlight_range: Option<(usize, usize)>,
@@ -123,7 +126,7 @@ impl Segment {
     pub fn height(&self, width: u16) -> u16 {
         self.images
             .iter()
-            .fold(self.text_height(width), |height, image| {
+            .fold(self.visible_text_height(width), |height, image| {
                 height.saturating_add(image.height())
             })
     }
@@ -165,6 +168,40 @@ impl Segment {
             height: h,
         }));
         h
+    }
+
+    /// Rows of text the reader may see right now. A whole block that just
+    /// landed is capped until its reveal reaches the full height.
+    pub fn visible_text_height(&self, width: u16) -> u16 {
+        let h = self.text_height(width);
+        self.reveal.map_or(h, |shown| h.min(shown))
+    }
+
+    pub fn is_revealing(&self, width: u16) -> bool {
+        self.reveal
+            .is_some_and(|shown| shown < self.text_height(width))
+    }
+
+    /// Shows one more row. Returns whether a reveal was advanced; clears the
+    /// state as the last row lands.
+    pub fn advance_reveal(&mut self, width: u16) -> bool {
+        let h = self.text_height(width);
+        let Some(shown) = self.reveal.as_mut() else {
+            return false;
+        };
+        *shown = shown.saturating_add(1);
+        if *shown >= h {
+            self.reveal = None;
+        }
+        true
+    }
+
+    pub fn set_reveal(&mut self, shown: u16) {
+        self.reveal = Some(shown);
+    }
+
+    pub fn finish_reveal(&mut self) {
+        self.reveal = None;
     }
 
     /// Maps a display row (after wrapping) back to the source line index.
@@ -430,6 +467,20 @@ impl SegmentCache {
 
     pub fn len(&self) -> usize {
         self.segments.len()
+    }
+
+    /// Advances the first segment still revealing by one row, so a batch grows
+    /// in document order at one row per tick overall.
+    pub fn advance_reveal(&mut self, width: u16) -> bool {
+        self.segments
+            .iter_mut()
+            .any(|segment| segment.advance_reveal(width))
+    }
+
+    pub fn is_revealing(&self, width: u16) -> bool {
+        self.segments
+            .iter()
+            .any(|segment| segment.is_revealing(width))
     }
 
     pub fn push_spacer_if_needed(&mut self) {

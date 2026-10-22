@@ -137,20 +137,23 @@ impl RenderCursor {
         highlight: bool,
         frame: &mut Frame,
     ) {
-        let h = seg.text_height(self.viewport.width);
+        let h = seg.visible_text_height(self.viewport.width);
         if self.skip >= h {
             self.skip -= h;
             return;
         }
         let mut walk = seg.rows_from(self.skip, self.viewport.width);
-        while self.y < self.bottom
-            && let Some((lines, rows)) = walk.next_chunk(self.bottom - self.y)
+        let mut drawn = self.skip;
+        while drawn < h
+            && self.y < self.bottom
+            && let Some((lines, rows)) = walk.next_chunk((self.bottom - self.y).min(h - drawn))
         {
             // The first chunk starts at the top of the line `skip` lands in, so
             // only the rows above `skip` inside that line are left to drop.
             // `render` zeroes `skip`, so later chunks drop nothing.
             self.skip = self.skip.saturating_sub(rows.start);
             self.render(lines, rows.end - rows.start, style, highlight, frame);
+            drawn = rows.end;
         }
     }
 }
@@ -171,7 +174,9 @@ mod tests {
     use test_case::test_case;
 
     use super::RenderCursor;
+    use super::Segment;
     use crate::terminal_image::InlineImage;
+    use ratatui::text::Line;
 
     const VIEWPORT: Rect = Rect::new(2, 2, 4, 2);
     const IMAGE_HEIGHT: u16 = 6;
@@ -253,6 +258,31 @@ mod tests {
         assert_eq!(cursor.skip, 0);
         assert_eq!(cursor.y, VIEWPORT.bottom());
         assert!(cursor.past_bottom());
+        Ok(())
+    }
+
+    #[test]
+    fn a_reveal_cap_bounds_the_drawn_rows() -> Result<()> {
+        const CAP: u16 = 3;
+        const VIEW: Rect = Rect::new(0, 0, 6, 6);
+        let lines: Vec<Line<'static>> = (0..6).map(|row| Line::from(format!("row{row}"))).collect();
+        let mut segment = Segment::with_lines(lines, None);
+        segment.set_reveal(CAP);
+
+        let mut terminal = Terminal::new(TestBackend::new(VIEW.width, VIEW.height))?;
+        let mut cursor = RenderCursor::new(0, VIEW);
+        terminal.draw(|frame| {
+            cursor.render_segment(&segment, None, false, frame);
+        })?;
+
+        assert_eq!(cursor.y, CAP, "only the granted rows may be drawn");
+        let buffer = terminal.backend().buffer();
+        for y in CAP..VIEW.height {
+            assert!(
+                buffer[(0, y)].symbol() == " ",
+                "row {y} must stay blank past the reveal cap"
+            );
+        }
         Ok(())
     }
 }

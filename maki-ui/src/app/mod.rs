@@ -2488,6 +2488,17 @@ impl App {
         dirty
     }
 
+    /// Advances clock-driven animation that is exactly due. This runs on every
+    /// paint, so an event-driven extra frame cannot accelerate a reveal.
+    pub fn advance_frame(&mut self, now: Instant) -> Dirty {
+        Dirty::any(self.chats.iter_mut().map(|chat| chat.advance_frame(now)))
+    }
+
+    /// The next exact animation deadline, for the loop's wake timeout.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.chats.iter().filter_map(Chat::next_deadline).min()
+    }
+
     /// What moves with the clock alone; changes that come from arriving data
     /// are reported by [`Self::tick`] instead. Overlays answer as a group, so
     /// adding one to [`Self::overlays`] is enough.
